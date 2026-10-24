@@ -14,7 +14,7 @@ pytest                                                         # testy pipeline
 
 ## Otevřené
 - Neověřeno: hlídání nečinnosti (JS v `idle_guard`) – zkusit v prohlížeči 2 min nic nedělat.
-- Repo zatím nepushnuté na GitHub (odkaz v About ještě nefunguje); commity dělá uživatel sám.
+- Repo je na GitHubu (`main`, push 2026-10-25); commit a push jen na požádání.
 - Dockerfile, nasazení na Cloud Run, pojistky (max-instances, budget, kill switch), `browser.gatherUsageStats=false`, GitHub Actions.
 
 ## Záznamy
