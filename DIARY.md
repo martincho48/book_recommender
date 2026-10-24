@@ -18,4 +18,6 @@
 - Postup pipeline popsán v `docs/pipeline.md`; README má sekce Data sources a ETL (krok za krokem) + quick start.
 - Nápady na později: souhrnná vydání (103 knih), hodnocení ≥ 4 jako pozitivní signál, korekce popularity.
 
-**Další krok:** první commit → baseline model.
+- Commit `ddb7898` do `main` (data pipeline + EDA + dokumentace), zatím nepushnuto.
+
+**Další krok:** push → baseline model.
