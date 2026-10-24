@@ -133,9 +133,9 @@ def similar_to_book(similar: pd.DataFrame, books: pd.DataFrame, book_id: int, n:
     return books.loc[ids]
 
 
-def author_books(books: pd.DataFrame, author: str, n: int = N_AUTHOR_BOOKS) -> pd.DataFrame:
-    """The author's n most popular books."""
-    return books[books.author == author].head(n)
+def author_books(books: pd.DataFrame, author: str) -> pd.DataFrame:
+    """All books of the author, most popular first."""
+    return books[books.author == author]
 
 
 def similar_to_author(similar: pd.DataFrame, books: pd.DataFrame, author: str, n: int = N_RECOMMENDATIONS) -> pd.DataFrame:
@@ -190,6 +190,30 @@ def show_author_info(book: pd.Series) -> None:
             show_author_bio(book)
 
 
+def show_author_books(books: pd.DataFrame, author: str) -> None:
+    """The author's books, N_AUTHOR_BOOKS at a time, with « » buttons to page through the rest."""
+    page_key = f"page_{author}"                       # remembered per author while the session lasts
+    n_pages = -(-len(books) // N_AUTHOR_BOOKS)
+    page = min(st.session_state.get(page_key, 0), n_pages - 1)
+    start, end = page * N_AUTHOR_BOOKS, min((page + 1) * N_AUTHOR_BOOKS, len(books))
+
+    def turn(step: int) -> None:
+        st.session_state[page_key] = page + step
+
+    heading, arrows = st.columns([5, 1], vertical_alignment="center")
+    with heading:
+        label = "Book" if len(books) == 1 else "Books"
+        shown = f" ({start + 1}–{end} of {len(books)})" if n_pages > 1 else ""
+        st.markdown(f"#### {label} by {escape(author)}{shown}")
+    if n_pages > 1:
+        with arrows, st.container(horizontal=True, horizontal_alignment="right", key="paging"):
+            st.button("", icon=":material/keyboard_double_arrow_left:", help="Previous books", type="tertiary",
+                      on_click=turn, args=(-1,), disabled=page == 0, key=f"prev_{author}")
+            st.button("", icon=":material/keyboard_double_arrow_right:", help="More books", type="tertiary",
+                      on_click=turn, args=(1,), disabled=page == n_pages - 1, key=f"next_{author}")
+    show_books(None, books.iloc[start:end], key=f"author_{page}")
+
+
 def show_selected_book(book: pd.Series) -> None:
     left, right = st.columns([1, 4])
     with left:
@@ -232,14 +256,16 @@ def book_card(book: pd.Series, key: str) -> None:
         show_description(book)
 
 
-def show_books(heading: str, books: pd.DataFrame) -> None:
-    """Book cards in rows of N_COLUMNS – every row starts aligned."""
-    st.markdown(f"#### {heading}")
+def show_books(heading: str | None, books: pd.DataFrame, key: str | None = None) -> None:
+    """Book cards in rows of N_COLUMNS – every row starts aligned. heading=None: the caller draws its own."""
+    if heading:
+        st.markdown(f"#### {heading}")
+    key = key or re.sub(r"[^A-Za-z0-9]+", "_", heading)
     for start in range(0, len(books), N_COLUMNS):
         row = books.iloc[start:start + N_COLUMNS]
         for column, (book_id, book) in zip(st.columns(N_COLUMNS), row.iterrows()):
             with column:
-                book_card(book, key=f"{re.sub(r'[^A-Za-z0-9]+', '_', heading)}_{book_id}")   # key = CSS class
+                book_card(book, key=f"{key}_{book_id}")   # key ends up as a CSS class
 
 
 def fonts_css() -> str:
@@ -273,6 +299,8 @@ def fonts_css() -> str:
         .selected-author {{ font-size: {FONTS["body_size"]}; color: {COLORS["muted"]}; margin-bottom: 0.3rem; }}
         .selected-meta {{ font-size: {FONTS["caption_size"]}; color: {COLORS["muted"]}; margin-bottom: 0.6rem; }}
         /* Description / About the author: small brown links with an icon, everywhere */
+        .st-key-paging button {{ color: {COLORS["accent"]}; }}                         /* « » paging arrows */
+        .st-key-paging button [data-testid="stIconMaterial"] {{ font-size: 2rem; }}
         [data-testid="stPopover"] button, [data-testid="stPopover"] button p {{
             font-size: {FONTS["caption_size"]}; color: {COLORS["accent"]};
         }}
@@ -379,12 +407,11 @@ def show_results(choice: Choice, books: pd.DataFrame, similar: pd.DataFrame) -> 
         with st.container(key="results"):
             show_books("Readers who liked it also liked", similar_to_book(similar, books, value))
     else:
-        top = author_books(books, value)
+        own = author_books(books, value)
         with st.container(key="selected"):
-            show_selected_author(top.iloc[0])
+            show_selected_author(own.iloc[0])
         with st.container(key="author_books"):
-            heading = f"Top {len(top)} books by {value}" if len(top) > 1 else f"Book by {value}"
-            show_books(heading, top)
+            show_author_books(own, value)
         with st.container(key="results"):
             show_books(f"Readers of {value} also liked", similar_to_author(similar, books, value))
 
