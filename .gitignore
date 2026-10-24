@@ -3,6 +3,9 @@
 venv/
 env/
 
+# Data (downloaded by src/ingest.py)
+data/
+
 # Python
 __pycache__/
 *.py[cod]
