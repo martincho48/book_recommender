@@ -1,3 +1,4 @@
-requests
+# the app – the only thing deployed to Cloud Run
+streamlit
 pandas
 pyarrow

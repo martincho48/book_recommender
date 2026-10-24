@@ -1,3 +1,20 @@
+# everything that runs locally: data pipeline, research notebooks, tests
 -r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+# pipeline
+requests
+numpy
+scipy
+langdetect
+transformers
+sentencepiece
+# research
+torch
+implicit
+sentence-transformers
+openpyxl
 ipykernel
 nbconvert
+# tests
+pytest
+playwright

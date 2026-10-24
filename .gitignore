@@ -3,8 +3,9 @@
 venv/
 env/
 
-# Data (downloaded by src/ingest.py)
+# Data (prod/pipeline.py) and research outputs – models, splits, report (research/experiments.ipynb)
 data/
+research/output/
 
 # Python
 __pycache__/
