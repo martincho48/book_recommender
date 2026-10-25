@@ -1,0 +1,4 @@
+# the app – the only thing in the Docker image on Cloud Run (pinned, so the image is the same as the tested local setup)
+streamlit==1.65.0
+pandas==2.3.3
+pyarrow==25.0.1

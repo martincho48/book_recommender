@@ -1,0 +1,6 @@
+# read when the app is started from the repo root (locally and in the Docker image)
+[server]
+enableStaticServing = true      # app/static/expired.html – the page shown after the idle timeout
+
+[browser]
+gatherUsageStats = false

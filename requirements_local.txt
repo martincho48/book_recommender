@@ -1,5 +1,5 @@
-# everything that runs locally: data pipeline, research notebooks, tests
--r requirements.txt
+# everything that runs locally: data pipeline, research notebooks, tests (includes the app requirements)
+-r requirements_docker.txt
 --extra-index-url https://download.pytorch.org/whl/cpu
 # pipeline
 requests

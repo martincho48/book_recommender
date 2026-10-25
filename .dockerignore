@@ -1,0 +1,8 @@
+# only what the Dockerfile copies – no research, notebooks, raw data or venv
+*
+!requirements_docker.txt
+!.streamlit/
+!app/app.py
+!app/static/
+!data/processed/books.parquet
+!data/processed/similar_books.parquet

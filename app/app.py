@@ -1,11 +1,11 @@
 """Book recommender app: pick a book or an author, get similar books (item-item, see pipeline.py).
 
-- Book   -> the 10 most similar books.
-- Author -> the author's top 5 books + 10 books by other authors that the author's readers liked
+- Book   -> up to 50 most similar books, paged.
+- Author -> the author's books + up to 50 books by other authors that the author's readers liked, paged
             (similarities to all of the author's books summed up).
 
 Usage:
-    streamlit run prod/app.py --server.enableStaticServing true
+    streamlit run app/app.py        (from the repo root, so .streamlit/config.toml is used)
 
 Reads books.parquet and similar_books.parquet from DATA_PATH (default: <repo>/data/processed).
 After IDLE_SECONDS without any activity the page moves to static/expired.html, which closes the
@@ -23,8 +23,11 @@ import streamlit as st
 
 REPO_ROOT = Path(__file__).resolve().parents[1]   # works no matter where the app is started from
 DATA_PATH = Path(os.environ.get("DATA_PATH", REPO_ROOT / "data" / "processed"))
-N_RECOMMENDATIONS = 10
+HEADER_PHOTO = Path(__file__).parent / "static" / "header.jpg"   # st.image, works without static serving
+N_RECOMMENDATIONS = 10            # per page
+N_LIKED = 50                      # recommendations to page through (pipeline keeps TOP_SIMILAR = 50 per book)
 N_AUTHOR_BOOKS = 5
+PAGER_NUMBERS = 5                 # page numbers shown in the author pager, the rest as dots
 N_COLUMNS = 5
 IDLE_SECONDS = 120
 
@@ -50,6 +53,11 @@ COLORS = {
     "genre": "#3f7d78",         # genres: muted teal, goes with the brown accent
     "no_cover": "#c7ced8",
 }
+# logo: white open book on a rounded square in the accent color
+LOGO_SVG = f"""<svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+  <rect width="48" height="48" rx="12" fill="{COLORS["accent"]}"/>
+  <path d="M9 15c5-2.2 10-2.2 14 1v19c-4-2.8-9-2.8-14-1z M39 15c-5-2.2-10-2.2-14 1v19c4-2.8 9-2.8 14-1z" fill="#fff"/>
+</svg>"""
 FONTS = {
     "import": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Merriweather:wght@700&display=swap",
     "body": "'Inter', sans-serif",
@@ -109,25 +117,23 @@ def reset_search() -> None:
 
 
 def pick(books: pd.DataFrame) -> Choice | None:
-    """Half-width search box that suggests only books and authors in the catalogue, with a Reset button next to it."""
+    """Search box (as wide as the column it is in) that suggests only books and authors in the catalogue, with a Reset button."""
     options, n_books = search_options(books)
-    search, _ = st.columns(2)
-    with search:
-        choice = st.selectbox(
-            "Book or author",
-            options=options,
-            format_func=lambda choice: choice_label(books, n_books, choice),
-            index=None,
-            placeholder="Start typing a title or an author…",
-            filter_mode="contains",
-            label_visibility="collapsed",
-            key=SEARCH_KEY,
-        )
-        st.button("Reset", icon=":material/restart_alt:", on_click=reset_search, disabled=choice is None)
+    choice = st.selectbox(
+        "Book or author",
+        options=options,
+        format_func=lambda choice: choice_label(books, n_books, choice),
+        index=None,
+        placeholder="Start typing a title or an author…",
+        filter_mode="contains",
+        label_visibility="collapsed",
+        key=SEARCH_KEY,
+    )
+    st.button("Reset", icon=":material/restart_alt:", on_click=reset_search, disabled=choice is None)
     return choice
 
 
-def similar_to_book(similar: pd.DataFrame, books: pd.DataFrame, book_id: int, n: int = N_RECOMMENDATIONS) -> pd.DataFrame:
+def similar_to_book(similar: pd.DataFrame, books: pd.DataFrame, book_id: int, n: int = N_LIKED) -> pd.DataFrame:
     """The n most similar books, best first."""
     ids = similar.loc[similar.book_id == book_id].nsmallest(n, "rank").similar_book_id
     return books.loc[ids]
@@ -138,7 +144,7 @@ def author_books(books: pd.DataFrame, author: str) -> pd.DataFrame:
     return books[books.author == author]
 
 
-def similar_to_author(similar: pd.DataFrame, books: pd.DataFrame, author: str, n: int = N_RECOMMENDATIONS) -> pd.DataFrame:
+def similar_to_author(similar: pd.DataFrame, books: pd.DataFrame, author: str, n: int = N_LIKED) -> pd.DataFrame:
     """Books by other authors, ranked by summed similarity to all of the author's books."""
     own = books.index[books.author == author]
     scores = similar.loc[similar.book_id.isin(own)].groupby("similar_book_id")["score"].sum()
@@ -175,6 +181,18 @@ def author_photo_html(book: pd.Series, height: int) -> str:
     return f"<div class='author-photo no-photo' style='width:{width}px;height:{height}px;font-size:{height // 3}px'>👤</div>"
 
 
+def author_html(book: pd.Series) -> str:
+    """Author name in a book card; on mouse over a bubble with photo, description and the start of the bio."""
+    name = f"<div class='book-author book-line'>{escape(book.author)}</div>"
+    if pd.isna(book.author_bio) and pd.isna(book.author_description):
+        return name
+    about = f"<i>{escape(book.author_description)}</i>" if pd.notna(book.author_description) else ""
+    bio = f"<div class='tip-bio'>{escape(book.author_bio)}</div>" if pd.notna(book.author_bio) else ""
+    return (f"<div class='author-hover'>{name}<div class='author-tip'>"
+            f"<div class='author-head'>{author_photo_html(book, 64)}<div><b>{escape(book.author)}</b><br>{about}</div></div>"
+            f"{bio}<div class='tip-source'>Source: Wikipedia</div></div></div>")
+
+
 def show_author_bio(book: pd.Series) -> None:
     """Author bio from Wikipedia (text and photo under CC BY-SA, so the source is linked)."""
     st.write(book.author_bio)
@@ -190,28 +208,41 @@ def show_author_info(book: pd.Series) -> None:
             show_author_bio(book)
 
 
-def show_author_books(books: pd.DataFrame, author: str) -> None:
-    """The author's books, N_AUTHOR_BOOKS at a time, with « » buttons to page through the rest."""
-    page_key = f"page_{author}"                       # remembered per author while the session lasts
-    n_pages = -(-len(books) // N_AUTHOR_BOOKS)
+def show_paged_books(heading: str, books: pd.DataFrame, key: str, per_page: int) -> None:
+    """Books per_page at a time; heading with [1–5 / 80] and a pager ‹ 1 2 3 4 5 • • • › to page through the rest."""
+    key = re.sub(r"[^A-Za-z0-9]+", "_", key)         # ends up in CSS classes
+    page_key = f"page_{key}"                          # remembered per section and author while the session lasts
+    n_pages = max(-(-len(books) // per_page), 1)
     page = min(st.session_state.get(page_key, 0), n_pages - 1)
-    start, end = page * N_AUTHOR_BOOKS, min((page + 1) * N_AUTHOR_BOOKS, len(books))
+    start, end = page * per_page, min((page + 1) * per_page, len(books))
 
-    def turn(step: int) -> None:
-        st.session_state[page_key] = page + step
+    def go(to: int) -> None:
+        st.session_state[page_key] = to
 
-    heading, arrows = st.columns([5, 1], vertical_alignment="center")
-    with heading:
-        label = "Book" if len(books) == 1 else "Books"
-        shown = f" ({start + 1}–{end} of {len(books)})" if n_pages > 1 else ""
-        st.markdown(f"#### {label} by {escape(author)}{shown}")
+    title, pager = st.columns([3, 2], vertical_alignment="center")
+    with title:
+        shown = f" [{start + 1}–{end} / {len(books)}]" if n_pages > 1 else ""
+        st.markdown(f"#### {escape(heading)}{shown}")
     if n_pages > 1:
-        with arrows, st.container(horizontal=True, horizontal_alignment="right", key="paging"):
-            st.button("", icon=":material/keyboard_double_arrow_left:", help="Previous books", type="tertiary",
-                      on_click=turn, args=(-1,), disabled=page == 0, key=f"prev_{author}")
-            st.button("", icon=":material/keyboard_double_arrow_right:", help="More books", type="tertiary",
-                      on_click=turn, args=(1,), disabled=page == n_pages - 1, key=f"next_{author}")
-    show_books(None, books.iloc[start:end], key=f"author_{page}")
+        first = min(max(page - PAGER_NUMBERS // 2, 0), max(n_pages - PAGER_NUMBERS, 0))   # numbers shown around page
+        last = min(first + PAGER_NUMBERS, n_pages)
+
+        def dots(hidden: int) -> None:                 # pages without a number, max 4 dots
+            if hidden:
+                st.markdown(f"<span class='pager-dots'>{' '.join('•' * min(hidden, 4))}</span>", unsafe_allow_html=True)
+
+        with pager, st.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center",
+                                 gap="small", key=f"paging_{key}"):
+            st.button("", icon=":material/chevron_left:", help="Previous books", on_click=go, args=(page - 1,),
+                      disabled=page == 0, key=f"prev_{key}")
+            dots(first)
+            for n in range(first, last):
+                st.button(str(n + 1), type="tertiary", on_click=go, args=(n,),
+                          key=f"{'pagecur' if n == page else 'pagenum'}_{key}_{n}")
+            dots(n_pages - last)
+            st.button("", icon=":material/chevron_right:", help="More books", on_click=go, args=(page + 1,),
+                      disabled=page == n_pages - 1, key=f"next_{key}")
+    show_books(None, books.iloc[start:end], key=f"{key}_{page}")
 
 
 def show_selected_book(book: pd.Series) -> None:
@@ -246,11 +277,12 @@ def show_selected_author(author_book: pd.Series) -> None:
 
 
 def book_card(book: pd.Series, key: str) -> None:
-    """One book in its own small card: fixed-height cover, title (max 2 lines), author, genres, description on click."""
+    """One book in its own small card: fixed-height cover, title (max 2 lines), author (bubble with info on mouse over),
+    genres, description on click."""
     with st.container(key=f"book_{key}"):
         show_cover(book.cover_url)
         st.markdown(f"<div class='book-title' title='{escape(book.title, quote=True)}'>{escape(book.title)}</div>"
-                    f"<div class='book-author book-line'>{escape(book.author)}</div>"
+                    f"{author_html(book)}"
                     f"<div class='book-genres book-line'>{escape(genre_text(book.genres))}</div>",
                     unsafe_allow_html=True)
         show_description(book)
@@ -299,8 +331,11 @@ def fonts_css() -> str:
         .selected-author {{ font-size: {FONTS["body_size"]}; color: {COLORS["muted"]}; margin-bottom: 0.3rem; }}
         .selected-meta {{ font-size: {FONTS["caption_size"]}; color: {COLORS["muted"]}; margin-bottom: 0.6rem; }}
         /* Description / About the author: small brown links with an icon, everywhere */
-        .st-key-paging button {{ color: {COLORS["accent"]}; }}                         /* « » paging arrows */
-        .st-key-paging button [data-testid="stIconMaterial"] {{ font-size: 2rem; }}
+        /* pager ‹ 1 2 3 4 5 • • • ›: small square arrows, muted numbers, current page in accent */
+        [class*="st-key-paging"] button {{ min-height: 0; padding: 0.15rem 0.35rem; color: {COLORS["accent"]}; }}
+        [class*="st-key-paging"] [class*="st-key-pagenum"] button p {{ color: {COLORS["muted"]}; }}
+        [class*="st-key-paging"] [class*="st-key-pagecur"] button p {{ color: {COLORS["accent"]}; font-weight: 700; }}
+        .pager-dots {{ color: {COLORS["muted"]}; letter-spacing: 0.1rem; }}
         [data-testid="stPopover"] button, [data-testid="stPopover"] button p {{
             font-size: {FONTS["caption_size"]}; color: {COLORS["accent"]};
         }}
@@ -335,7 +370,28 @@ def cards_css() -> str:
             padding: 0.9rem 0.9rem 0.4rem;
             min-height: {COVER_HEIGHT + 120}px;
             gap: 0.3rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }}
+        [class*="st-key-book_"]:hover {{                   /* the card under the mouse comes out a little */
+            transform: translateY(-4px) scale(1.03); position: relative; z-index: 5;   /* above its neighbours */
+            box-shadow: 6px 10px 20px -4px {COLORS["card_shadow"]};
+        }}
+        /* author bubble in a book card, shown on mouse over the name */
+        .author-hover {{ position: relative; }}
+        .author-tip {{
+            display: none; position: absolute; top: 100%; left: 0; z-index: 10; width: 320px; margin-top: 0.3rem;
+            padding: 0.8rem 0.9rem; background: {COLORS["book_card"]}; border-radius: 10px;
+            box-shadow: 6px 10px 24px -4px {COLORS["card_shadow"]};
+            font-family: {FONTS["body"]}; font-size: {FONTS["card_meta_size"]}; color: {COLORS["text"]}; line-height: 1.45;
+        }}
+        .author-hover:hover .author-tip {{ display: block; }}
+        [data-testid="stColumn"]:last-child .author-tip {{ left: auto; right: 0; }}   /* last column: open to the left */
+        .author-hover .book-author {{ cursor: help; }}
+        .author-tip .author-head {{ gap: 0.7rem; margin-bottom: 0.5rem; color: {COLORS["muted"]}; }}
+        .author-tip .author-head b {{ color: {COLORS["text"]}; }}
+        .author-tip .author-photo {{ margin-bottom: 0; }}
+        .tip-bio {{ overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; }}
+        .tip-source {{ margin-top: 0.4rem; color: {COLORS["muted"]}; font-size: {FONTS["caption_size"]}; }}
         .cover {{
             display: block; height: {COVER_HEIGHT}px; width: auto; max-width: 100%; margin: 0 0 0.9rem;   /* left = aligned with the text */
             object-fit: contain; border-radius: 6px; box-shadow: {BOOK_SHADOW} {COLORS["book_shadow"]};
@@ -347,6 +403,18 @@ def cards_css() -> str:
         .book-title {{                                   /* max 2 lines, longer titles end with … */
             overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
             height: 2.6em; line-height: 1.3;
+        }}
+        .stApp .app-title {{ padding-top: 0; }}
+        .st-key-brand {{ width: fit-content !important; max-width: 100%; }}
+        /* the suggestions may be wider than the search box, so long titles fit */
+        [data-testid="stSelectboxVirtualDropdown"], [data-testid="stSelectboxVirtualDropdown"] [role="listbox"] {{
+            min-width: min(780px, 90vw) !important;
+        }}
+        .logo {{ width: 2.6rem; height: 2.6rem; margin-right: 0.8rem; vertical-align: -0.35rem; filter: drop-shadow({BOOK_SHADOW} {COLORS["book_shadow"]}); }}
+        .app-title [data-testid="stHeaderActionElements"] {{ display: none; }}   /* no link icon next to the title */
+        .st-key-header_photo img {{                       /* !important: wins over the general .stApp img rule */
+            display: block; width: 100%; height: 230px; object-fit: cover !important; object-position: center 60%;
+            border-radius: 12px !important; box-shadow: {BOOK_SHADOW} {COLORS["book_shadow"]};
         }}
         .book-line {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }}
         .book-title + .book-line {{ margin-top: 0.15rem; }}
@@ -379,7 +447,8 @@ def show_about() -> None:
         st.markdown(
             "Recommendations are based on **collaborative filtering**. Data based on 6M ratings from "
             "[goodbooks-10k](https://github.com/zygmuntz/goodbooks-10k) (CC BY-SA 4.0), covers from "
-            "[Open Library](https://openlibrary.org), author info from [Wikipedia](https://en.wikipedia.org).")
+            "[Open Library](https://openlibrary.org), author info from [Wikipedia](https://en.wikipedia.org), "
+            "header photo by [Eldem Ozdemir](https://unsplash.com/@eldemozd) on [Unsplash](https://unsplash.com).")
         st.caption(f"© {date.today().year} {APP_AUTHOR} · version {APP_VERSION} · updated {APP_UPDATED} · "
                    f"[source code on GitHub]({REPO_URL})")
 
@@ -391,9 +460,14 @@ def main() -> None:
     books, similar = load_data(data_version())
 
     with st.container(key="search"):
-        st.title("📚 Book Recommender")
-        st.caption("Pick a book or an author and see what their readers also liked.")
-        choice = pick(books)
+        left, right = st.columns([2, 3], gap="large")
+        with left, st.container(key="brand"):          # as wide as the title, so the search box ends with it
+            st.markdown(f"<h1 class='app-title'>{LOGO_SVG}Book Recommender</h1>", unsafe_allow_html=True)
+            st.caption("Pick a book or an author and see what their readers also liked.")
+            choice = pick(books)
+        if HEADER_PHOTO.exists():                     # optional – the app works without it
+            with right, st.container(key="header_photo"):
+                st.image(str(HEADER_PHOTO), width="stretch")
     if choice is not None:
         show_results(choice, books, similar)
     show_about()
@@ -405,15 +479,18 @@ def show_results(choice: Choice, books: pd.DataFrame, similar: pd.DataFrame) -> 
         with st.container(key="selected"):
             show_selected_book(books.loc[value])
         with st.container(key="results"):
-            show_books("Readers who liked it also liked", similar_to_book(similar, books, value))
+            show_paged_books("Readers who liked it also liked", similar_to_book(similar, books, value),
+                             key=f"liked_book_{value}", per_page=N_RECOMMENDATIONS)
     else:
         own = author_books(books, value)
         with st.container(key="selected"):
             show_selected_author(own.iloc[0])
         with st.container(key="author_books"):
-            show_author_books(own, value)
+            show_paged_books(f"{'Book' if len(own) == 1 else 'Books'} by {value}", own,
+                             key=f"author_{value}", per_page=N_AUTHOR_BOOKS)
         with st.container(key="results"):
-            show_books(f"Readers of {value} also liked", similar_to_author(similar, books, value))
+            show_paged_books(f"Readers of {value} also liked", similar_to_author(similar, books, value),
+                             key=f"liked_{value}", per_page=N_RECOMMENDATIONS)
 
 
 main()

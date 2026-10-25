@@ -3,7 +3,7 @@
 venv/
 env/
 
-# Data (prod/pipeline.py) and research outputs – models, splits, report (research/experiments.ipynb)
+# Data (pipeline/pipeline.py) and research outputs – models, splits, report (research/experiments.ipynb)
 data/
 research/output/
 
@@ -27,3 +27,6 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local project diary (working notes for the author and Claude, not published)
+DIARY.md

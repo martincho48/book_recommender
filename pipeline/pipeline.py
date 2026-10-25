@@ -1,9 +1,9 @@
 """Production data pipeline: raw goodbooks-10k -> clean data -> similar books for the app.
 
 Usage:
-    python prod/pipeline.py                 # all steps
-    python prod/pipeline.py etl similar     # only some steps
-    python prod/pipeline.py ingest --force  # download again
+    python pipeline/pipeline.py                 # all steps
+    python pipeline/pipeline.py etl similar     # only some steps
+    python pipeline/pipeline.py ingest --force  # download again
 
 Steps:
     ingest   download 5 CSVs + books_xml.zip (book descriptions) into data/raw/
@@ -121,7 +121,7 @@ WRITER_WORDS = re.compile(r"writer|author|novelist|poet|playwright|journalist|es
 
 # --- similar
 MIN_RATING = 4        # rating >= 4 = "liked"
-TOP_SIMILAR = 20
+TOP_SIMILAR = 50
 
 logger = logging.getLogger(__name__)
 
