@@ -12,6 +12,7 @@ After IDLE_SECONDS without any activity the page moves to static/expired.html, w
 connection to the server – Cloud Run bills Streamlit for as long as the connection is open.
 """
 
+import json
 import os
 import re
 from datetime import date
@@ -29,7 +30,8 @@ N_LIKED = 50                      # recommendations to page through (pipeline ke
 N_AUTHOR_BOOKS = 5
 PAGER_NUMBERS = 5                 # page numbers shown in the author pager, the rest as dots
 N_COLUMNS = 5
-IDLE_SECONDS = 120
+IDLE_SECONDS = int(os.environ.get("IDLE_SECONDS", 120))   # env only to test it quickly
+IDLE_WARNING = int(os.environ.get("IDLE_WARNING", 30))    # "Still there?" with a countdown after this many idle seconds
 
 # --- about the app: update APP_VERSION and APP_UPDATED with every release
 APP_VERSION = "1.0.0"
@@ -416,6 +418,22 @@ def cards_css() -> str:
             display: block; width: 100%; height: 230px; object-fit: cover !important; object-position: center 60%;
             border-radius: 12px !important; box-shadow: {BOOK_SHADOW} {COLORS["book_shadow"]};
         }}
+        /* "Still there?" window of idle_guard, over the whole page */
+        .idle-warning {{
+            display: none; position: fixed; inset: 0; z-index: 1000000; align-items: center; justify-content: center;
+            background: rgba(30, 41, 59, 0.35);
+        }}
+        .idle-card {{
+            background: {COLORS["book_card"]}; border-radius: 16px; padding: 1.6rem 2rem; text-align: center;
+            box-shadow: 6px 10px 24px -4px {COLORS["card_shadow"]}; font-family: {FONTS["body"]}; color: {COLORS["text"]};
+        }}
+        .idle-card b {{ font-family: {FONTS["heading"]}; font-size: 1.3rem; color: {COLORS["accent"]}; }}
+        .idle-card p {{ margin: 0.6rem 0 1.1rem; }}
+        .idle-left {{ font-weight: 700; }}
+        .idle-card button {{
+            background: {COLORS["accent"]}; color: #fff; border: none; border-radius: 8px; padding: 0.5rem 1.4rem;
+            font-family: {FONTS["body"]}; font-weight: 600; cursor: pointer;
+        }}
         .book-line {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }}
         .book-title + .book-line {{ margin-top: 0.15rem; }}
     """
@@ -425,18 +443,40 @@ def apply_styles() -> None:
     st.markdown(f"<style>{fonts_css()}{cards_css()}</style>", unsafe_allow_html=True)
 
 
-def idle_guard(seconds: int = IDLE_SECONDS) -> None:
-    """After `seconds` without clicks, typing, mouse moves or scrolling, leave the page to close the connection."""
+def idle_guard(seconds: int = IDLE_SECONDS, warning: int = IDLE_WARNING) -> None:
+    """After `warning` idle seconds (no clicks, typing, mouse moves or scrolling) show "Still there?" with a countdown;
+    after `seconds` leave the page to close the connection. A click, key or scroll hides the window and starts again.
+    The iframe is sandboxed without top navigation, so the script is added to the page itself (once)."""
+    guard = f"""
+        let last = Date.now();
+        const box = document.createElement("div");
+        box.className = "idle-warning";
+        box.innerHTML = "<div class='idle-card'><b>Still there?</b>"
+          + "<p>The session ends in <span class='idle-left'></span> s to save resources.</p>"
+          + "<button>Continue</button></div>";
+        document.body.appendChild(box);
+        const reset = e => {{                  // with the window open, moving the mouse is not enough – click Continue
+          if (e.type === "mousemove" && box.style.display === "flex") return;
+          last = Date.now(); box.style.display = "none";
+        }};
+        ["click", "keydown", "mousemove", "scroll", "wheel", "touchstart"].forEach(e => document.addEventListener(e, reset, true));
+        setInterval(() => {{
+          const idle = (Date.now() - last) / 1000;
+          if (idle >= {seconds}) location.replace("app/static/expired.html");
+          else if (idle >= {warning}) {{
+            box.querySelector(".idle-left").textContent = Math.ceil({seconds} - idle);
+            box.style.display = "flex";
+          }}
+        }}, 1000);"""
     st.iframe(f"""
         <script>
           const page = window.parent;
-          let timer;
-          const reset = () => {{
-            clearTimeout(timer);
-            timer = setTimeout(() => page.location.replace("/app/static/expired.html"), {seconds} * 1000);
-          }};
-          ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach(e => page.document.addEventListener(e, reset));
-          reset();
+          if (!page.idleGuard) {{
+            page.idleGuard = true;
+            const script = page.document.createElement("script");
+            script.textContent = {json.dumps(guard)};
+            page.document.head.appendChild(script);
+          }}
         </script>""", height=1)
 
 
