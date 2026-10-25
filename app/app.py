@@ -424,12 +424,14 @@ def cards_css() -> str:
             background: rgba(30, 41, 59, 0.35);
         }}
         .idle-card {{
-            background: {COLORS["book_card"]}; border-radius: 16px; padding: 1.6rem 2rem; text-align: center;
+            background: {COLORS["book_card"]}; border-radius: 16px; padding: 1.6rem 2rem; text-align: center; min-width: 280px;
             box-shadow: 6px 10px 24px -4px {COLORS["card_shadow"]}; font-family: {FONTS["body"]}; color: {COLORS["text"]};
         }}
         .idle-card b {{ font-family: {FONTS["heading"]}; font-size: 1.3rem; color: {COLORS["accent"]}; }}
-        .idle-card p {{ margin: 0.6rem 0 1.1rem; }}
-        .idle-left {{ font-weight: 700; }}
+        .idle-card p {{ margin: 0.5rem 0 0.2rem; color: {COLORS["muted"]}; }}
+        .idle-left {{                                     /* digits of equal width, so the countdown does not move */
+            font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-bottom: 1rem;
+        }}
         .idle-card button {{
             background: {COLORS["accent"]}; color: #fff; border: none; border-radius: 8px; padding: 0.5rem 1.4rem;
             font-family: {FONTS["body"]}; font-weight: 600; cursor: pointer;
@@ -445,18 +447,17 @@ def apply_styles() -> None:
 
 def idle_guard(seconds: int = IDLE_SECONDS, warning: int = IDLE_WARNING) -> None:
     """After `warning` idle seconds (no clicks, typing, mouse moves or scrolling) show "Still there?" with a countdown;
-    after `seconds` leave the page to close the connection. A click, key or scroll hides the window and starts again.
+    after `seconds` leave the page to close the connection. Only the Continue button hides the window and starts again.
     The iframe is sandboxed without top navigation, so the script is added to the page itself (once)."""
     guard = f"""
         let last = Date.now();
         const box = document.createElement("div");
         box.className = "idle-warning";
-        box.innerHTML = "<div class='idle-card'><b>Still there?</b>"
-          + "<p>The session ends in <span class='idle-left'></span> s to save resources.</p>"
-          + "<button>Continue</button></div>";
+        box.innerHTML = "<div class='idle-card'><b>Still there?</b><p>Session ends in</p>"
+          + "<div class='idle-left'></div><button>Continue</button></div>";
         document.body.appendChild(box);
-        const reset = e => {{                  // with the window open, moving the mouse is not enough – click Continue
-          if (e.type === "mousemove" && box.style.display === "flex") return;
+        const reset = e => {{                  // with the window open, only the Continue button closes it
+          if (box.style.display === "flex" && !(e.type === "click" && e.target.closest(".idle-card button"))) return;
           last = Date.now(); box.style.display = "none";
         }};
         ["click", "keydown", "mousemove", "scroll", "wheel", "touchstart"].forEach(e => document.addEventListener(e, reset, true));
@@ -464,7 +465,8 @@ def idle_guard(seconds: int = IDLE_SECONDS, warning: int = IDLE_WARNING) -> None
           const idle = (Date.now() - last) / 1000;
           if (idle >= {seconds}) location.replace("app/static/expired.html");
           else if (idle >= {warning}) {{
-            box.querySelector(".idle-left").textContent = Math.ceil({seconds} - idle);
+            const left = Math.ceil({seconds} - idle);         // m:ss, always the same width
+            box.querySelector(".idle-left").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
             box.style.display = "flex";
           }}
         }}, 1000);"""
